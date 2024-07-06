@@ -4,6 +4,8 @@ use std::sync::{Condvar, Mutex, MutexGuard};
 type SynchronizedVec<T> = Mutex<Vec<T>>;
 type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
+// PhantomData<SynchronizedQueueTuple> tells the compiler that SynchronizedQueue should act like SynchronizedQueueTuple. 
+// This allows us to move around SynchronizedQueue instead of SynchronizedQueueTuple
 pub struct SynchronizedQueue<'a, T>{
     task_queue: SynchronizedQueueTuple<T>,
     _marker: std::marker::PhantomData<&'a SynchronizedQueueTuple<T>>,
@@ -16,14 +18,6 @@ impl <'a, T> SynchronizedQueue<'a, T> {
             _marker: std::marker::PhantomData,
         }
     }
-
-    // pub fn shallow_clone(&self) -> ArcSynchronizedQueue<'a, T> {
-    //     ArcSynchronizedQueue {
-    //         task_queue: Arc::clone(&self.task_queue),
-    //         _marker: std::marker::PhantomData,
-    //     }
-    // }
-        
 
     fn lock_unwrap(&self) -> MutexGuard<Vec<T>> {
         self.task_queue.0.lock().unwrap()
