@@ -8,6 +8,9 @@ use super::synchronized_queue::SynchronizedQueue;
 // Revisar static lifetime -> fixed
 // Improve ergonomics
 // Create range method to chain into new()
+
+// Aprendizado: lifetimes definem o espaço "mínimo" que algo pode existir, não necessariamente quanto
+// exatamente algo vai existir. Uma variavel 'static pode ser destruida imediatamente, mas ela deve poder existir até o final do programa
 pub struct ThreadPool<'a>{
     pool: Vec<thread::ScopedJoinHandle<'a, ()>>,
     task_queue: Arc<SynchronizedQueue<'a, Box<dyn FnOnce() + Send + 'a>>>,
