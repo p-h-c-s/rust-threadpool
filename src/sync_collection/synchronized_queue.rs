@@ -1,25 +1,28 @@
 
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Condvar, Mutex, MutexGuard};
 
-type SynchronizedQueue<T> = Mutex<Vec<T>>;
-type SynchronizedQueueTuple<T> = (SynchronizedQueue<T>, Condvar);
+type SynchronizedVec<T> = Mutex<Vec<T>>;
+type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
-pub struct ArcSynchronizedQueue<T>{
-    task_queue: Arc<SynchronizedQueueTuple<T>>,
+pub struct SynchronizedQueue<'a, T>{
+    task_queue: SynchronizedQueueTuple<T>,
+    _marker: std::marker::PhantomData<&'a SynchronizedQueueTuple<T>>,
 }
 
-impl <T> ArcSynchronizedQueue<T> {
+impl <'a, T> SynchronizedQueue<'a, T> {
     pub fn new() -> Self {
-        ArcSynchronizedQueue {
-            task_queue: Arc::new((Mutex::new(Vec::new()),  Condvar::new()))
+        SynchronizedQueue {
+            task_queue: (Mutex::new(Vec::new()),  Condvar::new()),
+            _marker: std::marker::PhantomData,
         }
     }
 
-    pub fn shallow_clone(&self) -> ArcSynchronizedQueue<T> {
-        ArcSynchronizedQueue {
-            task_queue: Arc::clone(&self.task_queue)
-        }
-    }
+    // pub fn shallow_clone(&self) -> ArcSynchronizedQueue<'a, T> {
+    //     ArcSynchronizedQueue {
+    //         task_queue: Arc::clone(&self.task_queue),
+    //         _marker: std::marker::PhantomData,
+    //     }
+    // }
         
 
     fn lock_unwrap(&self) -> MutexGuard<Vec<T>> {
@@ -41,7 +44,7 @@ impl <T> ArcSynchronizedQueue<T> {
     // Blocking pop operation. Waits until task_queue is not empty.
     // Doesn't return Option<T> as pop will always access a non-empty list
     pub fn pop_wait(& self) -> T {
-        let (queue, cvar) = &*self.task_queue;
+        let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
         q_ref = cvar.wait_while(q_ref, |q| q.is_empty()).unwrap();
         let item = q_ref.pop().unwrap();

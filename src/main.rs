@@ -14,5 +14,4 @@ fn main() {
         })
     }
     tpool.collect();
-    tpool.join_all().unwrap();
 }
