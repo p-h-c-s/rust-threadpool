@@ -14,7 +14,7 @@ use super::executor::Executor;
 // Além disso, os objetos captados pelas closures devem existir ao menos o mesmo lifetime que Threadpool
 pub struct ThreadPool<'a>{
     pool: Vec<thread::ScopedJoinHandle<'a, ()>>,
-    task_queue: Arc<SynchronizedQueue<'a, Box<dyn FnOnce() + Send + 'a>>>,
+    task_queue: Arc<SynchronizedQueue<Box<dyn FnOnce() + Send + 'a>>>,
 }
 
 impl <'a> ThreadPool<'a> {

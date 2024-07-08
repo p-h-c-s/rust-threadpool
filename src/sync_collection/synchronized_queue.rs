@@ -4,18 +4,14 @@ use std::sync::{Condvar, Mutex, MutexGuard};
 type SynchronizedVec<T> = Mutex<Vec<T>>;
 type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
-// PhantomData<SynchronizedQueueTuple> tells the compiler that SynchronizedQueue should act like SynchronizedQueueTuple. 
-// This allows us to move around SynchronizedQueue instead of SynchronizedQueueTuple
-pub struct SynchronizedQueue<'a, T>{
+pub struct SynchronizedQueue<T>{
     task_queue: SynchronizedQueueTuple<T>,
-    _marker: std::marker::PhantomData<&'a SynchronizedQueueTuple<T>>,
 }
 
-impl <'a, T> SynchronizedQueue<'a, T> {
+impl <T> SynchronizedQueue<T> {
     pub fn new() -> Self {
         SynchronizedQueue {
             task_queue: (Mutex::new(Vec::new()),  Condvar::new()),
-            _marker: std::marker::PhantomData,
         }
     }
 
