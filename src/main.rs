@@ -7,12 +7,15 @@ pub mod sync_collection;
 
 
 fn run() {
+    let x = 4;
     let mut tpool = ThreadPool::new(10);
+    // let x = &4; -> Errors, it is dropped before tpool
     for _ in 1..100000 {
         tpool.submit(|| {
             let id = thread::current().id();
             for _ in 1..10000 {
                 let _ = 2 * 2;
+                let y = x;
             }
         })
     }
@@ -23,10 +26,4 @@ fn main() {
     let before = Instant::now();
     run();
     println!("Elapsed time: {:.2?}", before.elapsed());
-
-    let q:sync_collection::synchronized_queue::SynchronizedQueue<u32> = sync_collection::synchronized_queue::SynchronizedQueue::new();
-    let qref = &q;
-    let qref2 = &q;
-    qref.push(2);
-    qref2.push(3);
 }

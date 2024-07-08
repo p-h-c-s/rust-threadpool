@@ -14,7 +14,7 @@ use super::executor::Executor;
 // Além disso, os objetos captados pelas closures devem existir ao menos o mesmo lifetime que Threadpool
 pub struct ThreadPool<'a>{
     pool: Vec<thread::ScopedJoinHandle<'a, ()>>,
-    task_queue: Arc<SynchronizedQueue<fn()>>,
+    task_queue: Arc<SynchronizedQueue<Box<dyn FnOnce() + Send + 'a>>>,
 }
 
 impl <'a> ThreadPool<'a> {
@@ -47,9 +47,10 @@ impl <'a> ThreadPool<'a> {
 impl <'a> Executor<'a> for ThreadPool<'a> {
 
     // TODO maybe implement bulk-submit to then use notify-all
-    fn submit(&mut self, func: fn())
+    fn submit<F>(&mut self, func: F)
+    where F: FnOnce() + Send + 'a
     {
-        self.task_queue.push(func);
+        self.task_queue.push(Box::new(func));
     }
 
     fn collect(&mut self) {
