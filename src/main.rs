@@ -23,4 +23,10 @@ fn main() {
     let before = Instant::now();
     run();
     println!("Elapsed time: {:.2?}", before.elapsed());
+
+    let q:sync_collection::synchronized_queue::SynchronizedQueue<u32> = sync_collection::synchronized_queue::SynchronizedQueue::new();
+    let qref = &q;
+    let qref2 = &q;
+    qref.push(2);
+    qref2.push(3);
 }

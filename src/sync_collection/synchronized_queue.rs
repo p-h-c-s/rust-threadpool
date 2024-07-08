@@ -19,8 +19,9 @@ impl <T> SynchronizedQueue<T> {
         self.task_queue.0.lock().unwrap()
     }
 
-    // Even though we are mutating the "queue", it is idiomatic to immutably borrow
-    // self here, as we're mutating the mutexed Vec<T>
+    // Even though we are mutating the conceptual "queue", 
+    // we need a shared ref (&self) in order to have concurrent access.
+    // The underlying mutex allows interior mutability
     pub fn push(&self, item: T) {
         self.lock_unwrap().push(item);
         self.task_queue.1.notify_one();
@@ -33,7 +34,7 @@ impl <T> SynchronizedQueue<T> {
 
     // Blocking pop operation. Waits until task_queue is not empty.
     // Doesn't return Option<T> as pop will always access a non-empty list
-    pub fn pop_wait(& self) -> T {
+    pub fn pop_wait(&self) -> T {
         let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
         q_ref = cvar.wait_while(q_ref, |q| q.is_empty()).unwrap();
