@@ -1,6 +1,7 @@
 
 use std::sync::{Condvar, Mutex, MutexGuard};
 
+
 type SynchronizedVec<T> = Mutex<Vec<T>>;
 type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
@@ -19,21 +20,20 @@ impl <T> SynchronizedQueue<T> {
         self.task_queue.0.lock().unwrap()
     }
 
-    // Even though we are mutating the conceptual "queue", 
-    // we need a shared ref (&self) in order to have concurrent access.
-    // The underlying mutex allows interior mutability
+    /// Even though we are mutating the conceptual "queue", 
+    /// we need a shared ref (&self) in order to have concurrent access.
+    /// The underlying mutex allows interior mutability
     pub fn push(&self, item: T) {
         self.lock_unwrap().push(item);
         self.task_queue.1.notify_one();
     }
 
-    // Non blocking pop, will return as soon as lock is acquired
     pub fn pop(&self) -> Option<T> {
         self.lock_unwrap().pop()
     }
 
-    // Blocking pop operation. Waits until task_queue is not empty.
-    // Doesn't return Option<T> as pop will always access a non-empty list
+    /// Blocking pop operation. Waits until task_queue is not empty.
+    /// Doesn't return Option<T> as pop will always access a non-empty list (the cvar is only released if q is not empty)
     pub fn pop_wait(&self) -> T {
         let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
@@ -44,3 +44,80 @@ impl <T> SynchronizedQueue<T> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_new() {
+        let queue: SynchronizedQueue<i32> = SynchronizedQueue::new();
+        let locked_queue = queue.lock_unwrap();
+        assert!(locked_queue.is_empty());
+    }
+
+    #[test]
+    fn test_push() {
+        let queue: Arc<SynchronizedQueue<i32>> = Arc::new(SynchronizedQueue::new());
+        queue.push(1);
+        let locked_queue = queue.lock_unwrap();
+        assert_eq!(locked_queue.len(), 1);
+        assert_eq!(locked_queue[0], 1);
+    }
+
+    #[test]
+    fn test_pop() {
+        let queue: Arc<SynchronizedQueue<i32>> = Arc::new(SynchronizedQueue::new());
+        queue.push(1);
+        let item = queue.pop();
+        assert_eq!(item, Some(1));
+        let locked_queue = queue.lock_unwrap();
+        assert!(locked_queue.is_empty());
+    }
+
+    #[test]
+    fn test_pop_wait() {
+        let queue: Arc<SynchronizedQueue<i32>> = Arc::new(SynchronizedQueue::new());
+
+        // Spawn a thread to push an item after a delay
+        let queue_clone = Arc::clone(&queue);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            queue_clone.push(1);
+        });
+
+        // `pop_wait` should block until the item is pushed
+        let item = queue.pop_wait();
+        assert_eq!(item, 1);
+        let locked_queue = queue.lock_unwrap();
+        assert!(locked_queue.is_empty());
+    }
+
+    #[test]
+    fn test_push_pop_multithreaded() {
+        let queue: Arc<SynchronizedQueue<i32>> = Arc::new(SynchronizedQueue::new());
+        let queue_clone = Arc::clone(&queue);
+
+        let producer = thread::spawn(move || {
+            for i in 0..10 {
+                queue_clone.push(i);
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        let queue_clone = Arc::clone(&queue);
+        let consumer = thread::spawn(move || {
+            let mut sum = 0;
+            for _ in 0..10 {
+                let item = queue_clone.pop_wait();
+                sum += item;
+            }
+            assert_eq!(sum, 45); // 0 + 1 + 2 + ... + 9 = 45
+        });
+
+        producer.join().unwrap();
+        consumer.join().unwrap();
+    }
+}
