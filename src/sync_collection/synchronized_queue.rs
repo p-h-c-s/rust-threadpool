@@ -1,31 +1,31 @@
 
-use std::sync::atomic::{AtomicI16, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 
-use std::sync::Arc;
 
 type SynchronizedVec<T> = Mutex<Vec<T>>;
 type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
 pub struct SynchronizedQueue<T>{
     task_queue: SynchronizedQueueTuple<T>,
-    remaining_jobs: AtomicI16
+    is_closed: AtomicBool,
 }
 
 impl <T> SynchronizedQueue<T> {
     pub fn new() -> Self {
         SynchronizedQueue {
             task_queue: (Mutex::new(Vec::new()),  Condvar::new()),
-            remaining_jobs: AtomicI16::new(0)
+            is_closed: AtomicBool::new(false)
         }
+    }
+
+    pub fn close(&self) {
+        self.is_closed.store(true, Ordering::Release);
+        self.task_queue.1.notify_all();
     }
 
     fn lock_unwrap(&self) -> MutexGuard<Vec<T>> {
         self.task_queue.0.lock().unwrap()
-    }
-
-    pub fn get_remaining_jobs(&self) -> i16 {
-        self.remaining_jobs.load(Ordering::Relaxed)
     }
 
     /// Even though we are mutating the conceptual "queue", 
@@ -33,33 +33,20 @@ impl <T> SynchronizedQueue<T> {
     /// The underlying mutex allows interior mutability
     pub fn push(&self, item: T) {
         self.lock_unwrap().insert(0, item);
-        self.remaining_jobs.fetch_add(1, Ordering::Relaxed);
-        self.task_queue.1.notify_one();
-    }
-
-    /// Pushes a job meant to allow the cvar to be unlocked
-    pub fn push_fake(&self, item: T) {
-        self.lock_unwrap().insert(0, item);
         self.task_queue.1.notify_one();
     }
 
     pub fn pop(&self) -> Option<T> {
         let item = self.lock_unwrap().pop();
-        let prev = self.remaining_jobs.fetch_sub(1, Ordering::Relaxed);
         item
     }
 
     /// Blocking pop operation. Waits until task_queue is not empty.
-    /// Doesn't return Option<T> as pop will always access a non-empty list (the cvar is only released if q is not empty)
-    /// This makes it hard to manually stop blocked threads. One way to do this is by pushing fake data to it.
-    pub fn pop_wait(&self) -> T {
+    pub fn pop_wait(&self) -> Option<T> {
         let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
-        // println!("qlen: {:?}", q_ref.len());
-        q_ref = cvar.wait_while(q_ref, |q| q.is_empty()).unwrap();
-        let item = q_ref.pop().unwrap();
-        self.remaining_jobs.fetch_sub(1, Ordering::Relaxed);
-        drop(q_ref);
+        q_ref = cvar.wait_while(q_ref, |q| q.is_empty() && !self.is_closed.load(Ordering::Acquire)).unwrap();
+        let item = q_ref.pop();
         item
     }
 }
@@ -109,7 +96,7 @@ mod tests {
         });
 
         // `pop_wait` should block until the item is pushed
-        let item = queue.pop_wait();
+        let item = queue.pop_wait().unwrap();
         assert_eq!(item, 1);
         let locked_queue = queue.lock_unwrap();
         assert!(locked_queue.is_empty());
@@ -131,7 +118,7 @@ mod tests {
         let consumer = thread::spawn(move || {
             let mut sum = 0;
             for _ in 0..10 {
-                let item = queue_clone.pop_wait();
+                let item = queue_clone.pop_wait().unwrap();
                 sum += item;
             }
             assert_eq!(sum, 45); // 0 + 1 + 2 + ... + 9 = 45
