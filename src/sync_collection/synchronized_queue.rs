@@ -1,18 +1,22 @@
 
+use std::sync::atomic::{AtomicI16, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 
+use std::sync::Arc;
 
 type SynchronizedVec<T> = Mutex<Vec<T>>;
 type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
 pub struct SynchronizedQueue<T>{
     task_queue: SynchronizedQueueTuple<T>,
+    remaining_jobs: AtomicI16
 }
 
 impl <T> SynchronizedQueue<T> {
     pub fn new() -> Self {
         SynchronizedQueue {
             task_queue: (Mutex::new(Vec::new()),  Condvar::new()),
+            remaining_jobs: AtomicI16::new(0)
         }
     }
 
@@ -20,25 +24,41 @@ impl <T> SynchronizedQueue<T> {
         self.task_queue.0.lock().unwrap()
     }
 
+    pub fn get_remaining_jobs(&self) -> i16 {
+        self.remaining_jobs.load(Ordering::Relaxed)
+    }
+
     /// Even though we are mutating the conceptual "queue", 
     /// we need a shared ref (&self) in order to have concurrent access.
     /// The underlying mutex allows interior mutability
     pub fn push(&self, item: T) {
-        self.lock_unwrap().push(item);
+        self.lock_unwrap().insert(0, item);
+        self.remaining_jobs.fetch_add(1, Ordering::Relaxed);
+        self.task_queue.1.notify_one();
+    }
+
+    /// Pushes a job meant to allow the cvar to be unlocked
+    pub fn push_fake(&self, item: T) {
+        self.lock_unwrap().insert(0, item);
         self.task_queue.1.notify_one();
     }
 
     pub fn pop(&self) -> Option<T> {
-        self.lock_unwrap().pop()
+        let item = self.lock_unwrap().pop();
+        let prev = self.remaining_jobs.fetch_sub(1, Ordering::Relaxed);
+        item
     }
 
     /// Blocking pop operation. Waits until task_queue is not empty.
     /// Doesn't return Option<T> as pop will always access a non-empty list (the cvar is only released if q is not empty)
+    /// This makes it hard to manually stop blocked threads. One way to do this is by pushing fake data to it.
     pub fn pop_wait(&self) -> T {
         let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
+        // println!("qlen: {:?}", q_ref.len());
         q_ref = cvar.wait_while(q_ref, |q| q.is_empty()).unwrap();
         let item = q_ref.pop().unwrap();
+        self.remaining_jobs.fetch_sub(1, Ordering::Relaxed);
         drop(q_ref);
         item
     }

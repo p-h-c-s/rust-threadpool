@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Condvar, Mutex}, thread::ScopedJoinHandle};
+use std::{sync::{atomic::AtomicBool, Arc, Condvar, Mutex, atomic::Ordering}, thread::ScopedJoinHandle};
 use super::synchronized_queue::SynchronizedQueue;
 use std::thread;
 
@@ -21,50 +21,45 @@ type Job<'a> = Box<dyn FnOnce() + Send + 'a>;
 // 'env pode ser maior que 'scope (variaveis escapam do scope)
 pub struct ThreadPool<'scope, 'env>{
     pool: Vec<thread::ScopedJoinHandle<'scope, ()>>,
-    task_queue: Arc<SynchronizedQueue<Job<'scope>>>,
-    server_break_sign: Arc<(Mutex<bool>, Condvar)>,
-    t_scope: &'scope thread::Scope<'scope, 'env>
+    task_queue: Arc<SynchronizedQueue<Job<'env>>>,
+    t_scope: &'scope thread::Scope<'scope, 'env>,
+    stop_signal: Arc<AtomicBool>
 }
+
+
+// https://marabos.nl/atomics/memory-ordering.html#seqcst
+// https://marabos.nl/atomics/atomics.html
+impl <'scope, 'env> Drop for ThreadPool<'scope, 'env> {
+    fn drop(&mut self) {
+        self.stop_signal.store(true, Ordering::Release);
+        // drop can be called before the actual queue is empty, causing a data race. 
+        // Pushing a fake job here will drain the queue
+        self.task_queue.push_fake(Box::new(||{}));
+        println!("drop jobs: {:?}", self.task_queue.get_remaining_jobs());
+    }
+}
+
 
 impl <'scope, 'env> ThreadPool<'scope, 'env> {
     pub fn new(num_threads: usize, t_scope: &'scope thread::Scope<'scope, 'env>) -> Self {
         ThreadPool {
+            // queue might not be needed because of scope
             pool: Vec::with_capacity(num_threads),
             task_queue: Arc::new(SynchronizedQueue::new()),
-            server_break_sign: Arc::new(
-                (Mutex::new(false), Condvar::new())
-            ),
-            t_scope
+            stop_signal: Arc::new(AtomicBool::new(false)),
+            t_scope,
         }
     }
 
-    pub fn collect_server(&mut self) {
-        for _ in 0..self.pool.capacity() {
-            let server_break_sign = Arc::clone(&self.server_break_sign);
-            let task_q_ref  =  Arc::clone(&self.task_queue);
-            self.t_scope.spawn(move || {
-                let (should_break, cvar) = &*server_break_sign;
-                loop {
-                    let mut should_break_ref = should_break.lock().unwrap();
-                    match &*should_break_ref {
-                        false => {
-                            should_break_ref = cvar.wait_while(should_break_ref, |sb| *sb).unwrap();
-                            drop(should_break_ref);
-                            task_q_ref.pop_wait()();
-                        },
-                        true => break
-                    }
-                }
-            });
-        }
+    pub fn with_pool<'a>(num_threads: usize, jobs: Vec<Job<'a>>)
+    {
+        thread::scope(|s| {
+            let mut t_pool: ThreadPool = ThreadPool::new(num_threads, s);
+            for j in jobs{
+                t_pool.submit(j);
+            }
+        })
     }
-
-    pub fn stop_server(&mut self) {
-        let (should_break, cvar) = &*self.server_break_sign;
-        *should_break.lock().unwrap() = false;
-        cvar.notify_all();
-    }
-
 
     // TODO maybe implement bulk-submit to then use notify-all
     pub fn submit<F>(&mut self, func: F)
@@ -73,32 +68,36 @@ impl <'scope, 'env> ThreadPool<'scope, 'env> {
         self.task_queue.push(Box::new(func));
         if self.pool.len() < self.pool.capacity() {
             self.pool.push(
-                self.spawn_worker()
-            )
+                self.spawn_persistent_worker()
+            );
         }
     }
 
-    fn spawn_worker(&self) -> ScopedJoinHandle<'scope, ()> {
+    // maybe arc isnt needed for atomics
+    // maybe refactor so the synchronized queue doesn't need to implement pop_wait.
+    // It doesn't make a lot of sense for it to have a "push_fake" method, as it's T can be anything (it doesn't have to be closures)
+    fn spawn_persistent_worker(&self) -> ScopedJoinHandle<'scope, ()> {
         let task_q_ref  =  Arc::clone(&self.task_queue);
-        self.t_scope.spawn(
-            move || {
+        let should_stop_ref = Arc::clone(&self.stop_signal);
+        self.t_scope.spawn(move || {
                 loop {
-                    match task_q_ref.pop() {
-                        Some(task) => task(),
-                        None => break
+                    // problema: entrar no loop antes do should_stop
+                    match should_stop_ref.load(Ordering::Acquire) && task_q_ref.get_remaining_jobs() <= 0{
+                        true => {
+                            // push fake jobs so blocked threads can exit cvar empty queue condition
+                            // println!("fake: {:?}", task_q_ref.get_remaining_jobs());
+                            task_q_ref.push_fake(Box::new(|| {}));
+                            break;
+                        },
+                        false => {
+                            // println!("running: {:?}", task_q_ref.get_remaining_jobs());
+                            task_q_ref.pop_wait()()
+                        }
                     }
                 }
             }
         )
     }
-
-    pub fn collect(& mut self)
-    {
-        for _ in 0..self.pool.capacity() {
-            self.spawn_worker();
-        }
-    }
-
 
 }
 
@@ -106,47 +105,39 @@ impl <'scope, 'env> ThreadPool<'scope, 'env> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
     #[test]
     fn test_new() {
-        let num_threads = 10;
-        let owned_str = String::from("123");
+        let num_threads = 1;
 
         thread::scope(|s| {
-            let mut t_pool = ThreadPool::new(num_threads, s);
-            for _ in 1..10 {
-                t_pool.submit(|| {
-                    println!("123");
-                    thread::sleep(Duration::from_millis(1000));
-                    println!("after");
-                });
-            }
+            let t_pool = ThreadPool::new(num_threads, s);
             assert!(t_pool.pool.capacity() == num_threads);
         });
 
     }
 
+    #[test]
+    fn test_submit() {
+        let num_threads = 1;
+        // understand why variables inside the scope break it
+        let owned_str = &String::from("I am outside scope");
 
-    // // o lifetime 'static das tasks impede que as tasks capturem dados que vivam menos que 'static. 
-    // // mas elas podem mover dados menores que 'static para dentro e retorna-los via copia
-    // #[test]
-    // fn test_collect() {
-    //     let num_threads = 5;
-    //     let sum = Arc::new(Mutex::new(0));
-    //     let sum_ref = &sum;
-    //     let mut t_pool = ThreadPool::new(num_threads);
-    //     let task = || {
-    //         *sum_ref.lock().unwrap() += 1;
-    //     };
-    
-    //     for _ in 1..t_pool.pool.capacity()+1 {
-    //         t_pool.submit(task);
-    //     }
-
-    //     t_pool.collect();
-    //     assert!(*sum.lock().unwrap() == 5);
-    // }
+        let before = Instant::now();
+        thread::scope(|s| {
+            let mut t_pool = ThreadPool::new(num_threads, s);
+            for _ in 1..10000000 {
+                t_pool.submit(move || {
+                    let _ = owned_str;
+                    let _x = 2.2*2.2;
+                    // println!("{:?}", owned_str);
+                });
+            }
+            // assert!(t_pool.pool.capacity() == num_threads);
+        });
+        println!("Elapsed time: {:.2?}", before.elapsed());
+    }
 }
