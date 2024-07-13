@@ -1,9 +1,10 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
+use std::collections::VecDeque;
 
 
-type SynchronizedVec<T> = Mutex<Vec<T>>;
+type SynchronizedVec<T> = Mutex<VecDeque<T>>;
 type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
 pub struct SynchronizedQueue<T>{
@@ -11,10 +12,12 @@ pub struct SynchronizedQueue<T>{
     is_closed: AtomicBool,
 }
 
+/// Thread-safe wrapper for a vec. Intended to be used as a queue
+/// We delegate the job of Wrapping this in an Arc to the user
 impl <T> SynchronizedQueue<T> {
     pub fn new() -> Self {
         SynchronizedQueue {
-            task_queue: (Mutex::new(Vec::new()),  Condvar::new()),
+            task_queue: (Mutex::new(VecDeque::new()),  Condvar::new()),
             is_closed: AtomicBool::new(false)
         }
     }
@@ -24,20 +27,17 @@ impl <T> SynchronizedQueue<T> {
         self.task_queue.1.notify_all();
     }
 
-    fn lock_unwrap(&self) -> MutexGuard<Vec<T>> {
+    fn lock_unwrap(&self) -> MutexGuard<VecDeque<T>> {
         self.task_queue.0.lock().unwrap()
     }
 
-    /// Even though we are mutating the conceptual "queue", 
-    /// we need a shared ref (&self) in order to have concurrent access.
-    /// The underlying mutex allows interior mutability
     pub fn push(&self, item: T) {
-        self.lock_unwrap().insert(0, item);
+        self.lock_unwrap().push_front(item);
         self.task_queue.1.notify_one();
     }
 
     pub fn pop(&self) -> Option<T> {
-        let item = self.lock_unwrap().pop();
+        let item = self.lock_unwrap().pop_back();
         item
     }
 
@@ -46,8 +46,7 @@ impl <T> SynchronizedQueue<T> {
         let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
         q_ref = cvar.wait_while(q_ref, |q| q.is_empty() && !self.is_closed.load(Ordering::Acquire)).unwrap();
-        let item = q_ref.pop();
-        item
+        q_ref.pop_back()
     }
 }
 

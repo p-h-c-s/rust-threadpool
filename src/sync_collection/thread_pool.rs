@@ -2,23 +2,23 @@ use std::{sync::Arc, thread::ScopedJoinHandle};
 use super::synchronized_queue::SynchronizedQueue;
 use std::thread;
 
-// Create range method to chain into new()
-
-// Aprendizado: lifetimes definem o espaço "mínimo" que algo pode existir, não necessariamente quanto
-// exatamente algo vai existir. Uma variavel 'static pode ser destruida imediatamente, mas ela deve poder existir até o final do programa
-// No caso, o lifetime 'a faz com que os campos da struct tenham que viver ao menos o mesmo espaço que ThreadPool
-// Além disso, os objetos captados pelas closures devem existir ao menos o mesmo lifetime da Threadpool
-// Unwrapping locked Mutexes is "safe" because we should panic if a single thread panic due to mutex poisoning risks
-
-// https://marabos.nl/atomics/memory-ordering.html#seqcst
-// https://marabos.nl/atomics/atomics.html
-
-// deal with panics -> with poisoned threads/mutexes
-// do we need to keep pool?
-
 type Job<'a> = Box<dyn FnOnce() + Send + 'a>;
 
-// 'env pode ser maior que 'scope (variaveis escapam do scope)
+/// Toy threadpool to run tasks with a limited number of threads. Avoids overhead of spawning a 
+/// thread for each task. 
+/// To avoid using non-scoped threads and thus requiring only 'static variables in the closures,
+/// the pool requires a std::thread::scope value as input
+/// 
+/// Usage:
+/// std::thread::scope(|s| {
+///     let t_pool = ThreadPool::new(num_threads, s);
+///     t_pool.submit(|| {
+///         work()
+///     })
+/// })
+/// 
+/// The scope allows the t_pool closures to capture variables with lifetimes other than 'stati
+/// 
 pub struct ThreadPool<'scope, 'env>{
     pool: Vec<thread::ScopedJoinHandle<'scope, ()>>,
     task_queue: Arc<SynchronizedQueue<Job<'env>>>,
@@ -97,18 +97,19 @@ mod tests {
 
     #[test]
     fn test_submit() {
-        // understand why variables created inside the scope break it
         let num_threads = 3;
+        
         let owned_str = &String::from("I am outside scope");
-
         let executed_tasks = &AtomicI32::new(0);
         let num_tasks = 100;
-
+        
         thread::scope(|s| {
+            let scoped_str = &String::from("I am inside scope");
             let mut t_pool = ThreadPool::new(num_threads, s);
             for _ in 1..num_tasks+1 {
                 t_pool.submit(move || {
                     let _ = owned_str;
+                    let _ = scoped_str;
                     let _x = 2.2*2.2;
                     executed_tasks.fetch_add(1, Ordering::Relaxed);
                 });
