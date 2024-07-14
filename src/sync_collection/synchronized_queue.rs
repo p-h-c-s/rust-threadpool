@@ -14,6 +14,7 @@ pub struct SynchronizedQueue<T>{
 
 /// Thread-safe wrapper for a vec. Intended to be used as a queue
 /// We delegate the job of Wrapping this in an Arc to the user
+/// We use unwrap on the Mutex, as the only reason the mutex panics on unwrap is when it is poisoned, which means one of the threads panicked while holding the lock.
 impl <T> SynchronizedQueue<T> {
     pub fn new() -> Self {
         SynchronizedQueue {
