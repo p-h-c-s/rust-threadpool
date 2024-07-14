@@ -31,18 +31,18 @@ impl <T> SynchronizedQueue<T> {
         self.task_queue.0.lock().unwrap()
     }
 
-    pub fn push(&self, item: T) {
+    pub fn push_front(&self, item: T) {
         self.lock_unwrap().push_front(item);
         self.task_queue.1.notify_one();
     }
 
-    pub fn pop(&self) -> Option<T> {
+    pub fn pop_back(&self) -> Option<T> {
         let item = self.lock_unwrap().pop_back();
         item
     }
 
     /// Blocking pop operation. Waits until task_queue is not empty.
-    pub fn pop_wait(&self) -> Option<T> {
+    pub fn pop_back_wait(&self) -> Option<T> {
         let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
         q_ref = cvar.wait_while(q_ref, |q| q.is_empty() && !self.is_closed.load(Ordering::Acquire)).unwrap();
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn test_push() {
         let queue: Arc<SynchronizedQueue<i32>> = Arc::new(SynchronizedQueue::new());
-        queue.push(1);
+        queue.push_front(1);
         let locked_queue = queue.lock_unwrap();
         assert_eq!(locked_queue.len(), 1);
         assert_eq!(locked_queue[0], 1);
@@ -76,8 +76,8 @@ mod tests {
     #[test]
     fn test_pop() {
         let queue: Arc<SynchronizedQueue<i32>> = Arc::new(SynchronizedQueue::new());
-        queue.push(1);
-        let item = queue.pop();
+        queue.push_front(1);
+        let item = queue.pop_back();
         assert_eq!(item, Some(1));
         let locked_queue = queue.lock_unwrap();
         assert!(locked_queue.is_empty());
@@ -91,11 +91,11 @@ mod tests {
         let queue_clone = Arc::clone(&queue);
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(50));
-            queue_clone.push(1);
+            queue_clone.push_front(1);
         });
 
         // `pop_wait` should block until the item is pushed
-        let item = queue.pop_wait().unwrap();
+        let item = queue.pop_back_wait().unwrap();
         assert_eq!(item, 1);
         let locked_queue = queue.lock_unwrap();
         assert!(locked_queue.is_empty());
@@ -108,7 +108,7 @@ mod tests {
 
         let producer = thread::spawn(move || {
             for i in 0..10 {
-                queue_clone.push(i);
+                queue_clone.push_front(i);
                 thread::sleep(Duration::from_millis(10));
             }
         });
@@ -117,7 +117,7 @@ mod tests {
         let consumer = thread::spawn(move || {
             let mut sum = 0;
             for _ in 0..10 {
-                let item = queue_clone.pop_wait().unwrap();
+                let item = queue_clone.pop_back_wait().unwrap();
                 sum += item;
             }
             assert_eq!(sum, 45); // 0 + 1 + 2 + ... + 9 = 45

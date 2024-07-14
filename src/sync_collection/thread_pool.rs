@@ -2,7 +2,6 @@ use std::{sync::Arc, thread::ScopedJoinHandle};
 use super::synchronized_queue::SynchronizedQueue;
 use std::thread;
 
-type Job<'a> = Box<dyn FnOnce() + Send + 'a>;
 
 /// Toy threadpool to run tasks with a limited number of threads. Avoids overhead of spawning a 
 /// thread for each task. 
@@ -19,6 +18,7 @@ type Job<'a> = Box<dyn FnOnce() + Send + 'a>;
 /// 
 /// The scope allows the t_pool closures to capture variables with lifetimes other than 'stati
 /// 
+type Job<'a> = Box<dyn FnOnce() + Send + 'a>;
 pub struct ThreadPool<'scope, 'env>{
     pool: Vec<thread::ScopedJoinHandle<'scope, ()>>,
     task_queue: Arc<SynchronizedQueue<Job<'env>>>,
@@ -55,7 +55,7 @@ impl <'scope, 'env> ThreadPool<'scope, 'env> {
     pub fn submit<F>(&mut self, func: F)
     where F: FnOnce() + Send + 'env
     {
-        self.task_queue.push(Box::new(func));
+        self.task_queue.push_front(Box::new(func));
         if self.pool.len() < self.pool.capacity() {
             self.pool.push(
                 self.spawn_persistent_worker()
@@ -67,7 +67,7 @@ impl <'scope, 'env> ThreadPool<'scope, 'env> {
         let task_q_ref  =  Arc::clone(&self.task_queue);
         self.t_scope.spawn(move || {
                 loop {
-                    match task_q_ref.pop_wait() {
+                    match task_q_ref.pop_back_wait() {
                         Some(f) => f(),
                         None => break
                     }
@@ -104,12 +104,10 @@ mod tests {
         let num_tasks = 100;
         
         thread::scope(|s| {
-            let scoped_str = &String::from("I am inside scope");
             let mut t_pool = ThreadPool::new(num_threads, s);
             for _ in 1..num_tasks+1 {
                 t_pool.submit(move || {
-                    let _ = owned_str;
-                    let _ = scoped_str;
+                    let _owner_str_ref = owned_str;
                     let _x = 2.2*2.2;
                     executed_tasks.fetch_add(1, Ordering::Relaxed);
                 });
