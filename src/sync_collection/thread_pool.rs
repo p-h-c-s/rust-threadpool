@@ -1,4 +1,4 @@
-use std::{sync::Arc, thread::ScopedJoinHandle};
+use std::sync::Arc;
 use super::synchronized_queue::SynchronizedQueue;
 use std::thread;
 
@@ -35,6 +35,7 @@ pub struct ThreadPool<'scope, 'env> {
 
 type Job<'a> = Box<dyn FnOnce() + Send + 'a>;
 
+/// Spawns threads on demand as jobs are submitted
 pub fn with_pool<'env, F>(num_threads: usize, f: F)
 where F: for<'scope> FnOnce(&mut ThreadPool<'scope, 'env>)
 {
@@ -44,6 +45,7 @@ where F: for<'scope> FnOnce(&mut ThreadPool<'scope, 'env>)
     })
 }
 
+/// Pre-spawns the threads in order to avoid mid-computation thread spawning overhead.
 pub fn with_reserved_pool<'env, F>(num_threads: usize, f: F)
 where F: for<'scope> FnOnce(&mut ThreadPool<'scope, 'env>)
 {
