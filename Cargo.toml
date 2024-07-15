@@ -1,8 +1,12 @@
 [package]
-name = "thread_pool"
+name = "scoped_tpool"
 version = "0.1.0"
 edition = "2021"
+
 [profile.test]
 inherits = "release"
+
 [profile.release]
 debug = true
+
+[dependencies]

@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use super::synchronized_queue::SynchronizedQueue;
 use std::thread;
+use super::synchronized_queue::SynchronizedQueue;
 
 
 /// Toy threadpool to run tasks with a limited number of threads. Avoids overhead of spawning a 

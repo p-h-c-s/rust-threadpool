@@ -16,7 +16,7 @@ sync_collection::with_pool(num_threads, |t_pool| {
 ```
 
 ### Small quirk
-Standard library's thread::scope can be a bit finnicky to use. If you create a variable inside the scope you might not borrow it to the spawned threads. You must move it.
+Standard library's thread::scope can be a bit finicky to use. If you create a variable inside the scope you might not borrow it to the spawned threads. You must move it.
 
 ```rust
 thread::scope(|s| {
@@ -32,7 +32,7 @@ This same behaviour exists for the pool, as it uses a thread::Scope:
 ```rust
     thread_pool::with_pool(num_threads, |t_pool| {
         let val = String::from("1234");
-        t_pool.submit(  move || {
+        t_pool.submit(move || {
             let z = &val;
         });
     }
@@ -42,4 +42,4 @@ This same behaviour exists for the pool, as it uses a thread::Scope:
 
 I challenged myself to avoid using the simple thread::spawn as it only allowed the closures to capture 'static lifetime references. This made everything a little bit harder as we then had to worry about the thread::Scope lifetimes carefully.
 
-I also avoided channels are they're a very useful abstraction. I wanted to learn what would it take to implement a synchronized queue in rust. Channels basically abstract that away.
+I also avoided channels are they're a very useful abstraction. I wanted to learn what it would take to implement a synchronized queue in rust. Channels basically abstract that away.

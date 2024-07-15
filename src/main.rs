@@ -1,7 +1,5 @@
-use sync_collection::thread_pool;
+use scoped_tpool::thread_pool;
 use std::{thread, time::Instant};
-
-pub mod sync_collection;
 
 fn run(num_threads: usize) {
     let val2 = String::from("123");
