@@ -1,12 +1,11 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
-use std::collections::VecDeque;
-
 
 type SynchronizedVec<T> = Mutex<VecDeque<T>>;
 type SynchronizedQueueTuple<T> = (SynchronizedVec<T>, Condvar);
 
-pub struct SynchronizedQueue<T>{
+pub struct SynchronizedQueue<T> {
     task_queue: SynchronizedQueueTuple<T>,
     is_closed: AtomicBool,
 }
@@ -14,11 +13,11 @@ pub struct SynchronizedQueue<T>{
 /// Thread-safe wrapper for a vec. Intended to be used as a queue
 /// We delegate the job of Wrapping this in an Arc to the user
 /// We use unwrap on the Mutex, as the only reason the mutex panics on unwrap is when it is poisoned, which means one of the threads panicked while holding the lock.
-impl <T> SynchronizedQueue<T> {
+impl<T> SynchronizedQueue<T> {
     pub fn new() -> Self {
         SynchronizedQueue {
-            task_queue: (Mutex::new(VecDeque::new()),  Condvar::new()),
-            is_closed: AtomicBool::new(false)
+            task_queue: (Mutex::new(VecDeque::new()), Condvar::new()),
+            is_closed: AtomicBool::new(false),
         }
     }
 
@@ -45,7 +44,11 @@ impl <T> SynchronizedQueue<T> {
     pub fn pop_back_wait(&self) -> Option<T> {
         let (queue, cvar) = &self.task_queue;
         let mut q_ref = queue.lock().unwrap();
-        q_ref = cvar.wait_while(q_ref, |q| q.is_empty() && !self.is_closed.load(Ordering::Acquire)).unwrap();
+        q_ref = cvar
+            .wait_while(q_ref, |q| {
+                q.is_empty() && !self.is_closed.load(Ordering::Acquire)
+            })
+            .unwrap();
         q_ref.pop_back()
     }
 }
